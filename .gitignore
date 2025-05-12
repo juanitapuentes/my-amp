@@ -1,0 +1,11 @@
+./src/outputs/
+*.csv
+*.npy
+*.pth
+./src/wandb/
+./src/mae_struct_encoder.pth
+__pycache__/
+*.log
+*.tmp
+*.pkl
+*.pt

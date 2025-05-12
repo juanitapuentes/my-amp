@@ -1,0 +1,73 @@
+{
+  "os":  "Linux-5.15.0-1087-azure-x86_64-with-glibc2.31",
+  "python":  "3.12.2",
+  "startedAt":  "2025-05-12T06:00:56.213990Z",
+  "args":  [
+    "--fold",
+    "2",
+    "--mode",
+    "cross_mini_juanis",
+    "--run_name",
+    "cross_mini_juanis_fold2_nopretrain",
+    "--batch_size",
+    "64",
+    "--wandb",
+    "True"
+  ],
+  "program":  "/home/bcv_researcher/merged_disk2/amp/AMP_Former/src/main.py",
+  "codePath":  "src/main.py",
+  "git":  {
+    "remote":  "https://github.com/BIOS-BCV/AMP_Former.git",
+    "commit":  "fb58a4598b3140553b4674ab602f5e3eab08e519"
+  },
+  "email":  "j.puentes@uniandes.edu.co",
+  "root":  "/home/bcv_researcher/merged_disk2/amp/AMP_Former/src",
+  "host":  "gamma4",
+  "username":  "bcv_researcher",
+  "executable":  "/home/bcv_researcher/anaconda3/envs/PLA-Net/bin/python",
+  "codePathLocal":  "main.py",
+  "cpu_count":  96,
+  "cpu_count_logical":  96,
+  "gpu":  "NVIDIA A100 80GB PCIe",
+  "gpu_count":  4,
+  "disk":  {
+    "/":  {
+      "total":  "266206101504",
+      "used":  "231907975168"
+    }
+  },
+  "memory":  {
+    "total":  "929980915712"
+  },
+  "cpu":  {
+    "count":  96,
+    "countLogical":  96
+  },
+  "gpu_nvidia":  [
+    {
+      "name":  "NVIDIA A100 80GB PCIe",
+      "memoryTotal":  "85899345920",
+      "cudaCores":  6912,
+      "architecture":  "Ampere"
+    },
+    {
+      "name":  "NVIDIA A100 80GB PCIe",
+      "memoryTotal":  "85899345920",
+      "cudaCores":  6912,
+      "architecture":  "Ampere"
+    },
+    {
+      "name":  "NVIDIA A100 80GB PCIe",
+      "memoryTotal":  "85899345920",
+      "cudaCores":  6912,
+      "architecture":  "Ampere"
+    },
+    {
+      "name":  "NVIDIA A100 80GB PCIe",
+      "memoryTotal":  "85899345920",
+      "cudaCores":  6912,
+      "architecture":  "Ampere"
+    }
+  ],
+  "cudaVersion":  "12.8"
+}

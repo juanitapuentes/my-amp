@@ -1,0 +1,104 @@
+wandb_version: 1
+
+data_csv:
+  desc: null
+  value: /home/naparicioc/NeurIPS2025/B_Project/AMP_Former/data/full_info_dataset.csv
+maps_dir:
+  desc: null
+  value: /home/naparicioc/NeurIPS2025/B_Project/AMP_Former/data/distance_maps
+fold:
+  desc: null
+  value: 1
+num_classes:
+  desc: null
+  value: 5
+mode:
+  desc: null
+  value: sequence
+seq_max_len:
+  desc: null
+  value: 200
+seq_d_model:
+  desc: null
+  value: 256
+seq_n_heads:
+  desc: null
+  value: 8
+seq_n_layers:
+  desc: null
+  value: 4
+dist_max_len:
+  desc: null
+  value: 224
+dist_d_model:
+  desc: null
+  value: 256
+dist_n_heads:
+  desc: null
+  value: 8
+dist_n_layers:
+  desc: null
+  value: 4
+epochs:
+  desc: null
+  value: 50
+batch_size:
+  desc: null
+  value: 32
+lr:
+  desc: null
+  value: 0.0001
+optimizer:
+  desc: null
+  value: adamw
+weight_decay:
+  desc: null
+  value: 0.0
+scheduler:
+  desc: null
+  value: none
+step_size:
+  desc: null
+  value: 10
+gamma:
+  desc: null
+  value: 0.1
+eval_interval:
+  desc: null
+  value: 10
+project:
+  desc: null
+  value: AMP-Multimodal
+run_name:
+  desc: null
+  value: sequence_fold1
+_wandb:
+  desc: null
+  value:
+    python_version: 3.12.2
+    cli_version: 0.16.6
+    framework: torch
+    is_jupyter_run: false
+    is_kaggle_kernel: true
+    start_time: 1746849161.0
+    t:
+      1:
+      - 1
+      - 5
+      - 53
+      - 55
+      2:
+      - 1
+      - 5
+      - 53
+      - 55
+      3:
+      - 13
+      - 16
+      - 23
+      4: 3.12.2
+      5: 0.16.6
+      8:
+      - 2
+      - 5
+      13: linux-x86_64
