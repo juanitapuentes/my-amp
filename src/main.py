@@ -14,7 +14,7 @@ from sklearn.metrics import average_precision_score, precision_recall_curve, roc
 import glob
 from args import get_args
 from dataset import AmpDataset, AmpDatasetWithImages
-from models import SequenceTransformer, DistanceTransformer, CrossAttentionModel, MultiModalClassifier, ConcatEmbeddingClassifier
+from models import SequenceTransformer, MultiModalClassifier, MultiModalClassifierGate
 
 # Amino acid vocabulary and sequence converter
 AA_LIST = ['-','A','B','C','D','E','F','G','H','I','J','K','L','M','N','P','Q','R','S','T','U','V','W','X','Y','Z']
@@ -174,25 +174,21 @@ if __name__ == '__main__':
             args=args
         )
     elif args.mode == 'cross_juanis':
-        model = MultiModalClassifier(
-            seq_d_model  = args.seq_d_model,
-            vit_out_dim  = 768,
-            n_heads      = args.seq_n_heads,
-            num_layers   = args.seq_n_layers,
-            num_classes  = args.num_classes,
-            vocab_size   = len(VOCAB),
-            max_len_seq  = args.seq_max_len
-        )
+        SEQ_D_MODEL   = 256
+        VIT_OUT_DIM   = 192
+        N_HEADS       = 4
+        NUM_LAYERS    = 4
+        NUM_CLASSES   = 5
+        MAX_LEN_SEQ   = 200
 
-    elif args.mode == 'concat_juanis':
-        model = ConcatEmbeddingClassifier(
-            seq_d_model  = args.seq_d_model,
-            vit_out_dim  = 192,
-            n_heads      = args.seq_n_heads,
-            num_layers   = args.seq_n_layers,
-            num_classes  = args.num_classes,
-            vocab_size   = len(VOCAB),
-            max_len_seq  = args.seq_max_len
+        model = MultiModalClassifierGate(
+            seq_d_model=SEQ_D_MODEL,
+            vit_out_dim=VIT_OUT_DIM,
+            n_heads=N_HEADS,
+            num_layers=NUM_LAYERS,
+            num_classes=NUM_CLASSES,
+            vocab_size=len(VOCAB),
+            max_len_seq=MAX_LEN_SEQ
         )
 
     else:

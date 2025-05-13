@@ -1,7 +1,7 @@
 DEVICE=3
-MODE="cross_mini_juanis"
-MODEL1="/home/bcv_researcher/merged_disk2/amp/AMP_Former/src/outputs/cross_mini_juanis/1/model_cross_mini_juanis_Fold1_cross_mini_juanis_fold1_nopretrain_epoch130.pth"
-MODEL2="/home/bcv_researcher/merged_disk2/amp/AMP_Former/src/outputs/cross_mini_juanis/2/model_cross_mini_juanis_Fold2_cross_mini_juanis_fold2_nopretrain_epoch130.pth"
+MODE="cross_juanis"
+MODEL1="/home/bcv_researcher/merged_disk2/amp/AMP_Former/src/outputs/cross_juanis/1/cross_juanis_fold1_ORIGINAL_baseVit/model_cross_juanis_cross_juanis_fold1_ORIGINAL_baseVit_epoch70.pth"
+MODEL2="/home/bcv_researcher/merged_disk2/amp/AMP_Former/src/outputs/cross_juanis/2/cross_juanis_fold2_ORIGINAL_baseVit/model_cross_juanis_cross_juanis_fold2_ORIGINAL_baseVit_epoch70.pth"
 
 CUDA_VISIBLE_DEVICES=$DEVICE python -u test.py \
     --mode ${MODE} \

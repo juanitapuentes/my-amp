@@ -10,8 +10,8 @@ import argparse
 import glob
 from tqdm import tqdm
 from args import get_args
-from dataset import AmpDataset, AmpDatasetWithImages, AmpDatasetWithImagesTiny
-from models import SequenceTransformer, DistanceTransformer, CrossAttentionModel, MultiModalClassifier, ConcatEmbeddingClassifier, MultiModalClassifierMini
+from dataset import AmpDataset, AmpDatasetWithImages
+from models import SequenceTransformer, DistanceTransformer, CrossAttentionModel, MultiModalClassifier, ConcatEmbeddingClassifier
 
 # Amino acid vocabulary for tokenization
 AA_LIST = ['-','A','B','C','D','E','F','G','H','I','J','K','L','M','N','P','Q','R','S','T','U','V','W','X','Y','Z']
@@ -117,15 +117,12 @@ def main():
 
     # Prepare test dataset and loader
     seq_transform = lambda s: seq_to_ids(s, get_args().seq_max_len)
-    test_ds = AmpDatasetWithImagesTiny(
-        csv_file   = args.data_csv,
-        maps_dir   = args.maps_dir,
-        seq_transform = seq_transform,
-        split_file = test_split,
-        global_min = global_min,
-        global_max = global_max,
-        img_size   = 32,
-        args       = args,           # now accepted
+    test_ds = AmpDatasetWithImages(
+        csv_file=args.data_csv,
+        maps_dir=args.maps_dir,
+        seq_transform=seq_transform,
+        split_file=test_split,
+        args=args
     )
     test_loader = DataLoader(test_ds, batch_size=args.batch_size)
 
@@ -146,16 +143,13 @@ def main():
         )
     elif args.mode == 'cross_juanis':
         model = MultiModalClassifier(
-            seq_d_model    = args.seq_d_model,
-            struct_d_model = 256,                     # was your old vit_out_dim
-            n_heads        = args.seq_n_heads,
-            num_layers     = args.seq_n_layers,
-            num_classes    = args.num_classes,
-            vocab_size     = len(VOCAB),
-            max_len_seq    = args.seq_max_len,
-            img_size       = 224,      # e.g. 224
-            patch_size     = 16 ,         # e.g. 16
-            img_channels= 1,          # e.g. 1
+            seq_d_model  = args.seq_d_model,
+            vit_out_dim  = 768,
+            n_heads      = args.seq_n_heads,
+            num_layers   = args.seq_n_layers,
+            num_classes  = args.num_classes,
+            vocab_size   = len(VOCAB),
+            max_len_seq  = args.seq_max_len
         )
 
     elif args.mode == 'concat_juanis':
