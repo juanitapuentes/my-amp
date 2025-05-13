@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 import os
+import torch.nn.functional as F
 import copy
 import os
 import random
@@ -14,7 +15,7 @@ from sklearn.metrics import average_precision_score, precision_recall_curve, roc
 import glob
 from args import get_args
 from dataset import AmpDataset, AmpDatasetWithImages
-from models import SequenceTransformer, MultiModalClassifier, MultiModalClassifierGate
+from models import SequenceTransformer, MultiModalClassifier, MultiModalClassifierGate, MultiModalClassifierAll
 
 # Amino acid vocabulary and sequence converter
 AA_LIST = ['-','A','B','C','D','E','F','G','H','I','J','K','L','M','N','P','Q','R','S','T','U','V','W','X','Y','Z']
@@ -176,7 +177,6 @@ if __name__ == '__main__':
     elif args.mode == 'cross_juanis':
         SEQ_D_MODEL   = 256
         VIT_OUT_DIM   = 192
-        N_HEADS       = 4
         NUM_LAYERS    = 4
         NUM_CLASSES   = 5
         MAX_LEN_SEQ   = 200
@@ -184,13 +184,29 @@ if __name__ == '__main__':
         model = MultiModalClassifierGate(
             seq_d_model=SEQ_D_MODEL,
             vit_out_dim=VIT_OUT_DIM,
-            n_heads=N_HEADS,
+            n_heads=args.seq_n_heads,
             num_layers=NUM_LAYERS,
             num_classes=NUM_CLASSES,
             vocab_size=len(VOCAB),
             max_len_seq=MAX_LEN_SEQ
         )
 
+    elif args.mode == 'concat_juanis':
+        SEQ_D_MODEL   = 256
+        VIT_OUT_DIM   = 192
+        NUM_LAYERS    = 4
+        NUM_CLASSES   = 5
+        MAX_LEN_SEQ   = 200
+
+        model = MultiModalClassifierAll(
+            seq_d_model=SEQ_D_MODEL,
+            vit_out_dim=VIT_OUT_DIM,
+            n_heads=args.seq_n_heads,
+            num_layers=NUM_LAYERS,
+            num_classes=NUM_CLASSES,
+            vocab_size=len(VOCAB),
+            max_len_seq=MAX_LEN_SEQ
+        )
     else:
         seq_m = SequenceTransformer(
             vocab_size=len(VOCAB),
@@ -244,33 +260,59 @@ if __name__ == '__main__':
 
     # Training loop
 
-    for epoch in range(1, args.epochs+1):
+    for epoch in range(1, args.epochs + 1):
         print(f"Epoch {epoch}/{args.epochs}")
         model.train()
         train_loss = 0.0
+
         for seq_ids, dist_map, labels in tqdm(tr_loader, desc="Training"):
             seq_ids = seq_ids.to(device)
             dist_map = dist_map.to(device)
             labels = labels.to(device)
+
             optimizer.zero_grad()
-            if args.mode == 'sequence':
+
+            # --------- FOR CROSS_JUANIS W/ MULTITASK EXTENSION ---------
+            if args.mode == 'cross_juanis':
+                logits_mm, logits_img, cls_seq, cls_img = model(seq_ids, dist_map)
+
+                # Main task loss (multimodal)
+                loss_mm = criterion(logits_mm, labels)
+
+                # Auxiliary image-only loss
+                loss_img = criterion(logits_img, labels)
+
+                z_seq = F.normalize(model.seq_proj(cls_seq), dim=-1)
+                z_img = F.normalize(model.img_proj(cls_img), dim=-1)
+                sim = torch.matmul(z_seq, z_img.T) / model.temp
+                targets = torch.arange(z_seq.size(0), device=device)
+                loss_con = F.cross_entropy(sim, targets)
+
+                # Weighted multitask loss
+                loss = loss_mm + 0.2 * loss_img + 0.1 * loss_con
+            # ------------------------------------------------------------
+
+            elif args.mode == 'sequence':
                 out = model(seq_ids)
+                loss = criterion(out, labels)
             elif args.mode == 'distance':
                 out = model(dist_map)
-            elif args.mode == 'cross_juanis':
-                out = model(seq_ids, dist_map)
+                loss = criterion(out, labels)
             elif args.mode == 'concat_juanis':
                 out = model(seq_ids, dist_map)
+                loss = criterion(out, labels)
             else:
                 raise ValueError(f"Unknown mode: {args.mode}")
-            loss = criterion(out, labels)
+
             loss.backward()
             optimizer.step()
             train_loss += loss.item()
+
         train_loss /= len(tr_loader)
 
-        # Validation and logging
-        #validate every 10 epochs
+        # --------------------------
+        # Validation and Logging
+        # --------------------------
         if epoch % 10 == 0:
             print("Validating...")
             val_loss, val_auc, val_ap, val_f1, per_ap, per_f1 = evaluate(model, val_loader, device, args.mode, args)
@@ -286,10 +328,10 @@ if __name__ == '__main__':
                 "Epoch": epoch
             })
             print(f"Epoch {epoch}/{args.epochs} - Train Loss: {train_loss:.4f}")
+
         if scheduler:
             scheduler.step()
 
-        # Full metrics logging
         if epoch % args.eval_interval == 0:
             metrics = {
                 "Val AUC": val_auc,
@@ -301,22 +343,23 @@ if __name__ == '__main__':
                 metrics[f"F1_{label}"] = per_f1[i]
             wandb.log(metrics)
             print("-- Full Evaluation Metrics --")
-            for k,v in metrics.items():
+            for k, v in metrics.items():
                 print(f" {k}: {v:.4f}")
-        # Save model checkpoint every 10 epochs
-        if epoch % 10 == 0:
-            # save it on the mode folder
-            if not os.path.exists("outputs"):
-                os.makedirs("outputs")
-            if not os.path.exists(os.path.join("outputs", args.mode)):
-                os.makedirs(os.path.join("outputs", args.mode))
-            if not os.path.exists(os.path.join("outputs", args.mode, str(args.fold))):
-                os.makedirs(os.path.join("outputs", args.mode, str(args.fold)))
-            if not os.path.exists(os.path.join("outputs", args.mode, str(args.fold),str(args.run_name))):
-                os.makedirs(os.path.join("outputs", args.mode, str(args.fold),str(args.run_name)))
-            
-            torch.save(model.state_dict(), os.path.join("outputs", args.mode, str(args.fold),str(args.run_name), f"model_{args.mode}_{args.run_name}_epoch{epoch}.pth"))
-            print(f"Model checkpoint saved at epoch {epoch}")
+
+            # Save model checkpoint every 10 epochs
+            if epoch % 10 == 0:
+                # save it on the mode folder
+                if not os.path.exists("outputs"):
+                    os.makedirs("outputs")
+                if not os.path.exists(os.path.join("outputs", args.mode)):
+                    os.makedirs(os.path.join("outputs", args.mode))
+                if not os.path.exists(os.path.join("outputs", args.mode, str(args.fold))):
+                    os.makedirs(os.path.join("outputs", args.mode, str(args.fold)))
+                if not os.path.exists(os.path.join("outputs", args.mode, str(args.fold),str(args.run_name))):
+                    os.makedirs(os.path.join("outputs", args.mode, str(args.fold),str(args.run_name)))
+                
+                torch.save(model.state_dict(), os.path.join("outputs", args.mode, str(args.fold),str(args.run_name), f"model_{args.mode}_{args.run_name}_epoch{epoch}.pth"))
+                print(f"Model checkpoint saved at epoch {epoch}")
 
     # Save final model
     torch.save(model.state_dict(), os.path.join("outputs", args.mode, str(args.fold),str(args.run_name), f"modelFINAL_{args.run_name}.pth"))

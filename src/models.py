@@ -74,6 +74,19 @@ class ClassifierTransformer(nn.Module):
         h = self.token_emb(x) + self.pos_emb(positions)
         h = self.encoder(h)
         return h[:, 0, :]
+    def forward_get_all_tokens(self, x):
+        """
+        Return the full sequence of token embeddings after encoding,
+        including the prepended CLS token. Shape = (B, seq_len+1, d_model)
+        """
+        bsz, seq_len = x.size()
+        cls_tokens = torch.full((bsz, 1), self.cls_token_id,
+                                dtype=torch.long, device=x.device)
+        x = torch.cat([cls_tokens, x], dim=1)
+        positions = torch.arange(seq_len + 1, device=x.device).unsqueeze(0)
+        h = self.token_emb(x) + self.pos_emb(positions)
+        h = self.encoder(h)
+        return h
 
 
 class ImageViTEncoder(nn.Module):
@@ -187,7 +200,6 @@ class MultiModalClassifierGate(nn.Module):
             vocab_size=vocab_size, max_len=max_len_seq
         )
         self.struct_encoder = ImageViTEncoder()
-        # use the gated version here
         self.cross_attn = GatedBidirectionalCrossAttention(
             dim_seq=seq_d_model,
             dim_img=vit_out_dim,
@@ -196,10 +208,141 @@ class MultiModalClassifierGate(nn.Module):
         self.dropout = nn.Dropout(0.2)
         self.classifier = nn.Linear(seq_d_model + vit_out_dim, num_classes)
 
+        # 🟩 Auxiliary head and temperature for contrastive loss
+        self.img_classifier = nn.Linear(vit_out_dim, num_classes)
+        self.temp = nn.Parameter(torch.tensor(0.07))
+        self.seq_proj = nn.Linear(seq_d_model, 128)
+        self.img_proj = nn.Linear(vit_out_dim, 128)
+
     def forward(self, seq_ids, struct_tensor):
         cls_seq = self.seq_encoder.forward_get_cls(seq_ids)
         cls_img = self.struct_encoder.forward_get_cls(struct_tensor)
-        # this now returns gated fusions
         fused_seq, fused_img = self.cross_attn(cls_seq, cls_img)
-        h = torch.cat([fused_seq, fused_img], dim=1)
+        logits_mm = self.classifier(torch.cat([fused_seq, fused_img], dim=1))
+        logits_img = self.img_classifier(cls_img)  # 🟩 new: image-only head
+        return logits_mm, logits_img, cls_seq, cls_img
+
+class ImageViTEncoderAll(nn.Module):
+    def __init__(self, model_name='vit_tiny_patch16_224', pretrained=True):
+        super().__init__()
+        # load the ViT, but we’ll override how forward_features works
+        self.vit = timm.create_model(model_name, pretrained=pretrained, in_chans=1)
+        # throw away its head
+        self.vit.head = nn.Identity()
+
+    def forward(self, x):
+        """
+        Return the full sequence of tokens (CLS + patches).
+        Shape: (B, N+1, D)
+        """
+        B = x.shape[0]
+        # patch embedding
+        x = self.vit.patch_embed(x)                  # (B, N, D)
+        # prep and concat CLS
+        cls = self.vit.cls_token.expand(B, -1, -1)   # (B, 1, D)
+        x = torch.cat((cls, x), dim=1)               # (B, N+1, D)
+        # add pos emb & dropout
+        x = x + self.vit.pos_embed
+        x = self.vit.pos_drop(x)
+        # pass through transformer blocks
+        for blk in self.vit.blocks:
+            x = blk(x)
+        x = self.vit.norm(x)
+        return x  # full token sequence
+
+
+class BidirectionalCrossAttentionAll(nn.Module):
+    def __init__(self, dim_seq, dim_img, num_heads):
+        super().__init__()
+        self.cross_seq_to_img = MultiheadAttention(
+            embed_dim=dim_seq, kdim=dim_img, vdim=dim_img,
+            num_heads=num_heads, batch_first=True)
+        self.cross_img_to_seq = MultiheadAttention(
+            embed_dim=dim_img, kdim=dim_seq, vdim=dim_seq,
+            num_heads=num_heads, batch_first=True)
+
+    def forward(self, seq_tokens, img_tokens):
+        """
+        seq_tokens: (B, L_seq+1, D_seq)
+        img_tokens: (B, N_img+1, D_img)
+        """
+        # cross‐attend: let every seq token attend to all image tokens
+        attn_seq, _ = self.cross_seq_to_img(
+            seq_tokens, img_tokens, img_tokens
+        )  # → (B, L_seq+1, D_seq)
+
+        # and vice‐versa
+        attn_img, _ = self.cross_img_to_seq(
+            img_tokens, seq_tokens, seq_tokens
+        )  # → (B, N_img+1, D_img)
+
+        return attn_seq, attn_img
+    
+class MultiModalClassifierAll(nn.Module):
+    def __init__(self, seq_d_model=256, vit_out_dim=192,
+                 n_heads=8, num_layers=4,
+                 num_classes=5, vocab_size=None, max_len_seq=200):
+        super().__init__()
+        # sequence encoder unchanged
+        self.seq_encoder = ClassifierTransformer(
+            d_model=seq_d_model, n_heads=n_heads,
+            num_layers=num_layers, num_classes=None,
+            vocab_size=vocab_size, max_len=max_len_seq
+        )
+        # now uses the “all‐token” image encoder
+        self.img_encoder = ImageViTEncoderAll()
+        # cross‐attention over full sequences
+        self.cross_attn = BidirectionalCrossAttentionAll(
+            dim_seq=seq_d_model,
+            dim_img=vit_out_dim,
+            num_heads=n_heads
+        )
+        self.dropout = nn.Dropout(0.2)
+        # we’ll pool (mean) over the attended sequence before classifying
+        self.classifier = nn.Linear(seq_d_model + vit_out_dim,
+                                    num_classes)
+
+    def forward(self, seq_ids, img):
+        # get full token sequences
+        seq_tok = self.seq_encoder.forward_get_all_tokens(seq_ids)
+        img_tok = self.img_encoder(img)
+
+        # cross‐attend
+        seq_attn, img_attn = self.cross_attn(seq_tok, img_tok)
+
+        # pool each: here mean‐pool over the token dim (you could also pick CLS=first token)
+        seq_feat = seq_attn.mean(dim=1)  # (B, D_seq)
+        img_feat = img_attn.mean(dim=1)  # (B, D_img)
+
+        h = torch.cat([seq_feat, img_feat], dim=-1)
         return self.classifier(self.dropout(h))
+    
+
+class MultiModalMT(MultiModalClassifierGate):
+    def __init__(self,
+                 seq_d_model: int,
+                 vit_out_dim: int,
+                 n_heads: int,
+                 num_layers: int,
+                 num_classes: int,
+                 vocab_size: int,
+                 max_len_seq: int):
+        super().__init__(
+            seq_d_model=seq_d_model,
+            vit_out_dim=vit_out_dim,
+            n_heads=n_heads,
+            num_layers=num_layers,
+            num_classes=num_classes,
+            vocab_size=vocab_size,
+            max_len_seq=max_len_seq
+        )
+        self.img_classifier = nn.Linear(vit_out_dim, num_classes)
+        self.temp = nn.Parameter(torch.tensor(0.07))
+
+    def forward(self, seq_ids, dist_map):
+        cls_seq = self.seq_encoder.forward_get_cls(seq_ids)
+        cls_img = self.struct_encoder.forward_get_cls(dist_map)
+        fused_seq, fused_img = self.cross_attn(cls_seq, cls_img)
+        logits_mm = self.classifier(torch.cat([fused_seq, fused_img], dim=-1))
+        logits_img = self.img_classifier(cls_img)
+        return logits_mm, logits_img, cls_seq, cls_img
