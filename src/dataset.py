@@ -78,13 +78,15 @@ class AmpDataset(Dataset):
 
         return sequence, distance_map, labels
     
+# dataset.py
 
 class AmpDatasetWithImages(Dataset):
     """
-    PyTorch Dataset for Antimicrobial Peptides (AMPs).
-    Returns tuples of (sequence_tensor, image_tensor, label_tensor).
-    Sequence tensor is produced via a user-provided transform.
-    Distance maps (.npy) are now treated as images and fed through a ViT pipeline.
+    PyTorch Dataset for AMPs returning:
+      - seq_ids:   LongTensor (max_len,)
+      - img:       FloatTensor (1, img_size, img_size)
+      - labels:    FloatTensor (num_classes,)
+    Accepts an `args` object so you can pass through global_min/global_max, etc.
     """
     LABEL_COLUMNS = [
         "Antibacterial", "Antifungal", "Antiviral",
@@ -96,11 +98,15 @@ class AmpDatasetWithImages(Dataset):
         csv_file: str,
         maps_dir: str,
         seq_transform=None,
-        split_file: str=None,
-        args=None
+        split_file: str = None,
+        global_min: float = None,
+        global_max: float = None,
+        img_size: int = 224,
+        args=None,                    # ← new
     ):
+        import pandas as pd
         if not os.path.exists(csv_file):
-            raise FileNotFoundError(f"CSV file not found at {csv_file}")
+            raise FileNotFoundError(f"CSV not found: {csv_file}")
         df = pd.read_csv(csv_file)
         if split_file:
             splits = pd.read_csv(split_file)['Sequence'].tolist()
@@ -108,19 +114,12 @@ class AmpDatasetWithImages(Dataset):
         df['Hash'] = df['Hash'].fillna('')
         df[self.LABEL_COLUMNS] = df[self.LABEL_COLUMNS].fillna(0.0)
         self.df = df
-        self.maps_dir = maps_dir
+        self.maps_dir   = maps_dir
         self.seq_transform = seq_transform
-        self.args = args
-
-        # transform para ViT: convierte la matriz 2D normalizada a PIL y luego a tensor 3×H×W
-        self.image_transform = transforms.Compose([
-            transforms.ToPILImage(mode='F'),
-            transforms.Resize((self.args.dist_max_len, self.args.dist_max_len)),
-            transforms.Grayscale(num_output_channels=1),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.5],
-                                 std=[0.5]),
-        ])
+        self.global_min = global_min
+        self.global_max = global_max
+        self.img_size   = img_size
+        self.args       = args         # store it if you need elsewhere
 
     def __len__(self):
         return len(self.df)
@@ -128,27 +127,34 @@ class AmpDatasetWithImages(Dataset):
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
 
-        # secuencia
+        # --- sequence IDs ---
         seq = row['Sequence']
         if self.seq_transform:
-            seq = self.seq_transform(seq)
+            seq_ids = self.seq_transform(seq)
+        else:
+            raise ValueError("You must provide a seq_transform")
 
-        # carga .npy y normaliza a [0,1]
-        hash_str = row['Hash']
-        npy_path = os.path.join(self.maps_dir, f"{hash_str}.npy")
-        if not os.path.exists(npy_path):
-            raise FileNotFoundError(f"Distance map not found at {npy_path}")
+        # --- load distance map ---
+        npy_path = os.path.join(self.maps_dir, f"{row['Hash']}.npy")
         mat = np.load(npy_path).astype(np.float32)
-        mn, mx = mat.min(), mat.max()
-        mat = (mat - mn) / (mx - mn + 1e-8)
 
-        # procesa como imagen para ViT → tensor (3, H, W)
-        img = self.image_transform(mat)
+        # --- normalize globally ---
+        mat = (mat - self.global_min) / (self.global_max - self.global_min + 1e-8)
+        mat = np.clip(mat, 0.0, 1.0)
 
-        # etiquetas
+        # --- resize to square image ---
+        x = torch.from_numpy(mat).unsqueeze(0)  # (1, H, W)
+        x = F.interpolate(
+            x.unsqueeze(0),
+            size=(self.img_size, self.img_size),
+            mode='bilinear',
+            align_corners=False
+        ).squeeze(0)  # now (1, img_size, img_size)
+
+        # --- labels ---
         labels = torch.tensor(
             row[self.LABEL_COLUMNS].values.astype(np.float32),
             dtype=torch.float32
         )
 
-        return seq, img, labels
+        return seq_ids, x, labels

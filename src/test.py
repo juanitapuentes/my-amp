@@ -11,10 +11,9 @@ import glob
 from tqdm import tqdm
 from args import get_args
 from dataset import AmpDataset, AmpDatasetWithImages
-from models import SequenceTransformer, MultiModalClassifier,MultiModalClassifierAll, 
-
+from models import SequenceTransformer, MultiModalClassifier
 # Amino acid vocabulary for tokenization
-AA_LIST = ['-','A','B','C','D','E','F','G','H','I','J','K','L','M','N','P','Q','R','S','T','U','V','W','X','Y','Z']
+AA_LIST = ['A','C','D','E','F','G','H','I','K','L','M','N','P','Q','R','S','T','V','W','Y']
 VOCAB = {aa: i+1 for i, aa in enumerate(AA_LIST)}
 VOCAB['PAD'] = 0
 
@@ -115,15 +114,21 @@ def main():
         if m < global_min: global_min = m
         if M > global_max: global_max = M
 
+
+    
     # Prepare test dataset and loader
     seq_transform = lambda s: seq_to_ids(s, get_args().seq_max_len)
-    test_ds = AmpDatasetWithImages(
-        csv_file=args.data_csv,
-        maps_dir=args.maps_dir,
-        seq_transform=seq_transform,
-        split_file=test_split,
-        args=args
-    )
+    test_ds =   AmpDatasetWithImages(
+                csv_file   = args.data_csv,
+                maps_dir   = args.maps_dir,
+                seq_transform = seq_transform,
+                split_file = test_split,
+                global_min = global_min,
+                global_max = global_max,
+                img_size   = 224,
+                args       = args,           # now accepted
+            )
+    
     test_loader = DataLoader(test_ds, batch_size=args.batch_size)
 
     # Instantiate two models of given mode
@@ -142,51 +147,22 @@ def main():
             args=args
         )
     elif args.mode == 'cross_juanis':
-        SEQ_D_MODEL   = 256
-        VIT_OUT_DIM   = 192
-        NUM_LAYERS    = 4
-        NUM_CLASSES   = 5
-        MAX_LEN_SEQ   = 200
-
-        model = MultiModalClassifierGate(
-            seq_d_model=SEQ_D_MODEL,
-            vit_out_dim=VIT_OUT_DIM,
-            n_heads=args.seq_n_heads,
-            num_layers=NUM_LAYERS,
-            num_classes=NUM_CLASSES,
-            vocab_size=len(VOCAB),
-            max_len_seq=MAX_LEN_SEQ
-        )
 
 
-    elif args.mode == 'concat_juanis':
-        SEQ_D_MODEL   = 256
-        VIT_OUT_DIM   = 192
-        NUM_LAYERS    = 4
-        NUM_CLASSES   = 5
-        MAX_LEN_SEQ   = 200
-
-        model = MultiModalClassifierAll(
-            seq_d_model=SEQ_D_MODEL,
-            vit_out_dim=VIT_OUT_DIM,
-            n_heads=args.seq_n_heads,
-            num_layers=NUM_LAYERS,
-            num_classes=NUM_CLASSES,
-            vocab_size=len(VOCAB),
-            max_len_seq=MAX_LEN_SEQ
-        )
-
-    elif args.mode == 'cross_mini_juanis':
-        model = MultiModalClassifierMini(
-            seq_d_model    = args.seq_d_model,              
-            n_heads        = 8,
-            num_layers     = 4,
+        model = MultiModalClassifier(
+            seq_d_model    = args.seq_d_model,
+            struct_d_model = 192,                     # was your old vit_out_dim
+            n_heads        = args.seq_n_heads,
+            num_layers     = args.seq_n_layers,
             num_classes    = args.num_classes,
             vocab_size     = len(VOCAB),
             max_len_seq    = args.seq_max_len,
-            img_size       = 32,      # e.g. 224
-            patch_size     = 4 ,         # e.g. 16
+            img_size       = 224,      # e.g. 224
+            patch_size     = 16,          # e.g. 16
+            img_channels   = 1,  
         )
+
+    
 
     else:
         seq_m = SequenceTransformer(

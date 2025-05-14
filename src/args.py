@@ -25,7 +25,7 @@ def get_args():
 
     # Mode selection
     parser.add_argument(
-        '--mode', choices=['sequence','distance','both', 'cross_juanis', 'concat_juanis', 'cross_mini_juanis'], required=True,
+        '--mode', choices=['sequence','distance','both', 'cross_juanis', 'concat_juanis', 'cross_mini_juanis', 'joint_fusion'], required=True,
         help="Model mode: 'sequence' for sequence-only, 'distance' for distance-only, 'both' for combined cross-attention"
     )
 

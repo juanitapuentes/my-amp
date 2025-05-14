@@ -15,10 +15,10 @@ from sklearn.metrics import average_precision_score, precision_recall_curve, roc
 import glob
 from args import get_args
 from dataset import AmpDataset, AmpDatasetWithImages
-from models import SequenceTransformer, MultiModalClassifier, MultiModalClassifierGate, MultiModalClassifierAll
+from models import SequenceTransformer, MultiModalClassifier
 
 # Amino acid vocabulary and sequence converter
-AA_LIST = ['-','A','B','C','D','E','F','G','H','I','J','K','L','M','N','P','Q','R','S','T','U','V','W','X','Y','Z']
+AA_LIST = ['A','C','D','E','F','G','H','I','K','L','M','N','P','Q','R','S','T','V','W','Y']
 VOCAB = {aa: i+1 for i, aa in enumerate(AA_LIST)}
 VOCAB['PAD'] = 0
 
@@ -135,24 +135,45 @@ if __name__ == '__main__':
         train_split = "/home/bcv_researcher/merged_disk2/amp/Database/Fold2.csv"
         val_split = "/home/bcv_researcher/merged_disk2/amp/Database/Fold1.csv"
 
+    maps_dir = args.maps_dir
+    npy_paths = glob.glob(os.path.join(maps_dir, "*.npy"))
+
+    # 2) Initialize running min/max
+    global_min = float("inf")
+    global_max = -float("inf")
+
+    # 3) Loop once to update
+    for p in npy_paths:
+        mat = np.load(p)
+        # we only care about mat.min() and mat.max()
+        m, M = float(mat.min()), float(mat.max())
+        if m < global_min: global_min = m
+        if M > global_max: global_max = M
+
+
     
     # Dataset and loaders
     seq_transform = lambda s: seq_to_ids(s, args.seq_max_len)
     ds_train = AmpDatasetWithImages(
-        csv_file=args.data_csv,
-        maps_dir=args.maps_dir,
-        seq_transform=seq_transform,
-        split_file=train_split,
-        args=args
-    )
+                csv_file   = args.data_csv,
+                maps_dir   = args.maps_dir,
+                seq_transform = seq_transform,
+                split_file = train_split,
+                global_min = global_min,
+                global_max = global_max,
+                img_size   = 224,
+                args       = args,           # now accepted
+            )
     ds_val = AmpDatasetWithImages(
-        csv_file=args.data_csv,
-        maps_dir=args.maps_dir,
-        seq_transform=seq_transform,
-        split_file=val_split,
-        args=args
-    )
-
+                csv_file   = args.data_csv,
+                maps_dir   = args.maps_dir,
+                seq_transform = seq_transform,
+                split_file = val_split,
+                global_min = global_min,
+                global_max = global_max,
+                img_size   = 224,
+                args       = args,           # now accepted
+            )
     tr_loader = DataLoader(ds_train, batch_size=args.batch_size, shuffle=True,)
     val_loader = DataLoader(ds_val, batch_size=args.batch_size)
 
@@ -174,21 +195,30 @@ if __name__ == '__main__':
             n_layers=args.dist_n_layers,
             args=args
         )
-    elif args.mode == 'cross_juanis':
-        SEQ_D_MODEL   = 256
-        VIT_OUT_DIM   = 192
-        NUM_LAYERS    = 4
-        NUM_CLASSES   = 5
-        MAX_LEN_SEQ   = 200
 
-        model = MultiModalClassifierGate(
-            seq_d_model=SEQ_D_MODEL,
-            vit_out_dim=VIT_OUT_DIM,
+    elif args.mode == 'joint_fusion':
+        model = MultiModalJointTransformer(
+            seq_d_model=256,
+            vit_out_dim=192,  # must match your ViT output dim
             n_heads=args.seq_n_heads,
-            num_layers=NUM_LAYERS,
-            num_classes=NUM_CLASSES,
+            num_layers=4,
+            num_classes=args.num_classes,
             vocab_size=len(VOCAB),
-            max_len_seq=MAX_LEN_SEQ
+            max_len_seq=args.seq_max_len
+        )
+        
+    elif args.mode == 'cross_juanis':
+        model = MultiModalClassifier(
+            seq_d_model    = args.seq_d_model,
+            struct_d_model = 192,                     # was your old vit_out_dim
+            n_heads        = args.seq_n_heads,
+            num_layers     = args.seq_n_layers,
+            num_classes    = args.num_classes,
+            vocab_size     = len(VOCAB),
+            max_len_seq    = args.seq_max_len,
+            img_size       = 224,      # e.g. 224
+            patch_size     = 16,          # e.g. 16
+            img_channels   = 1,  
         )
 
     elif args.mode == 'concat_juanis':
@@ -274,24 +304,8 @@ if __name__ == '__main__':
 
             # --------- FOR CROSS_JUANIS W/ MULTITASK EXTENSION ---------
             if args.mode == 'cross_juanis':
-                logits_mm, logits_img, cls_seq, cls_img = model(seq_ids, dist_map)
-
-                # Main task loss (multimodal)
-                loss_mm = criterion(logits_mm, labels)
-
-                # Auxiliary image-only loss
-                loss_img = criterion(logits_img, labels)
-
-                z_seq = F.normalize(model.seq_proj(cls_seq), dim=-1)
-                z_img = F.normalize(model.img_proj(cls_img), dim=-1)
-                sim = torch.matmul(z_seq, z_img.T) / model.temp
-                targets = torch.arange(z_seq.size(0), device=device)
-                loss_con = F.cross_entropy(sim, targets)
-
-                # Weighted multitask loss
-                loss = loss_mm + 0.2 * loss_img + 0.1 * loss_con
-            # ------------------------------------------------------------
-
+                out = model(seq_ids, dist_map)
+                loss = criterion(out, labels)
             elif args.mode == 'sequence':
                 out = model(seq_ids)
                 loss = criterion(out, labels)
@@ -299,6 +313,9 @@ if __name__ == '__main__':
                 out = model(dist_map)
                 loss = criterion(out, labels)
             elif args.mode == 'concat_juanis':
+                out = model(seq_ids, dist_map)
+                loss = criterion(out, labels)
+            elif args.mode == 'joint_fusion':
                 out = model(seq_ids, dist_map)
                 loss = criterion(out, labels)
             else:
@@ -347,19 +364,19 @@ if __name__ == '__main__':
                 print(f" {k}: {v:.4f}")
 
             # Save model checkpoint every 10 epochs
-            if epoch % 10 == 0:
-                # save it on the mode folder
-                if not os.path.exists("outputs"):
-                    os.makedirs("outputs")
-                if not os.path.exists(os.path.join("outputs", args.mode)):
-                    os.makedirs(os.path.join("outputs", args.mode))
-                if not os.path.exists(os.path.join("outputs", args.mode, str(args.fold))):
-                    os.makedirs(os.path.join("outputs", args.mode, str(args.fold)))
-                if not os.path.exists(os.path.join("outputs", args.mode, str(args.fold),str(args.run_name))):
-                    os.makedirs(os.path.join("outputs", args.mode, str(args.fold),str(args.run_name)))
+        if epoch % 10 == 0:
+            # save it on the mode folder
+            if not os.path.exists("outputs"):
+                os.makedirs("outputs")
+            if not os.path.exists(os.path.join("outputs", args.mode)):
+                os.makedirs(os.path.join("outputs", args.mode))
+            if not os.path.exists(os.path.join("outputs", args.mode, str(args.fold))):
+                os.makedirs(os.path.join("outputs", args.mode, str(args.fold)))
+            if not os.path.exists(os.path.join("outputs", args.mode, str(args.fold),str(args.run_name))):
+                os.makedirs(os.path.join("outputs", args.mode, str(args.fold),str(args.run_name)))
                 
-                torch.save(model.state_dict(), os.path.join("outputs", args.mode, str(args.fold),str(args.run_name), f"model_{args.mode}_{args.run_name}_epoch{epoch}.pth"))
-                print(f"Model checkpoint saved at epoch {epoch}")
+            torch.save(model.state_dict(), os.path.join("outputs", args.mode, str(args.fold),str(args.run_name), f"model_{args.mode}_{args.run_name}_epoch{epoch}.pth"))
+            print(f"Model checkpoint saved at epoch {epoch}")
 
     # Save final model
     torch.save(model.state_dict(), os.path.join("outputs", args.mode, str(args.fold),str(args.run_name), f"modelFINAL_{args.run_name}.pth"))
